@@ -301,3 +301,52 @@ TEST_CASE("Radial LRMP multi particle types dynamic reactions time derivative Ja
 	cadet::JsonParameterProvider jpp = createColumnWithTwoCompLinearBindingThreeParticleTypesRadLRMP();
 	cadet::test::reaction::testTimeDerivativeJacobianDynamicReactionsFD(jpp, true, true, true, 1e-6, 1e-14, 8e-4);
 }
+
+// ============================================================================
+// Radial LRMP DG Tests
+// ============================================================================
+
+TEST_CASE("Radial LRMP_DG transport Jacobian", "[RadLRMP],[DG],[UnitOp],[Jacobian]")
+{
+	cadet::JsonParameterProvider jpp = createColumnLinearBenchmark(false, true, "RADIAL_LUMPED_RATE_MODEL_WITH_PORES", "DG");
+	cadet::test::column::testJacobianAD(jpp, std::numeric_limits<float>::epsilon() * 100.0);
+}
+
+TEST_CASE("Radial LRMP_DG with two component linear binding Jacobian", "[RadLRMP],[DG],[UnitOp],[Jacobian]")
+{
+	cadet::JsonParameterProvider jpp = createColumnWithTwoCompLinearBinding("RADIAL_LUMPED_RATE_MODEL_WITH_PORES", "DG");
+	cadet::test::column::testJacobianAD(jpp, std::numeric_limits<float>::epsilon() * 100.0);
+}
+
+TEST_CASE("Radial LRMP_DG time derivative Jacobian vs FD", "[RadLRMP],[DG],[UnitOp],[Residual],[Jacobian]")
+{
+	cadet::test::column::testTimeDerivativeJacobianFD("RADIAL_LUMPED_RATE_MODEL_WITH_PORES", "DG", 1e-6, 0.0, 9e-4);
+}
+
+// ============================================================
+// Radial LRMP_DG Gaussian pulse EOC convergence tests
+// Parameters from CADET-Julia test12_EOC_gaussian_pulse_rLRMP:
+//   rin=0.1, rout=1.1, v=2/60 m/s, D=1e-4, eps_c=0.6,
+//   eps_p=0.5, Rp=1e-4, kf=1e-3
+// ============================================================
+
+TEST_CASE("Radial LRMP_DG polyDeg 1 EOC convergence", "[RadLRMP],[DG],[Convergence],[EOC]")
+{
+	cadet::test::column::testRadialDGConvergence(
+		"/data/model_radLRMP_DG_gaussianPulse_1comp_eocbenchmark.json", "001",
+		1, 4, 4, 2.0, 0.5);
+}
+
+TEST_CASE("Radial LRMP_DG polyDeg 2 EOC convergence", "[RadLRMP],[DG],[Convergence],[EOC]")
+{
+	cadet::test::column::testRadialDGConvergence(
+		"/data/model_radLRMP_DG_gaussianPulse_1comp_eocbenchmark.json", "001",
+		2, 4, 4, 3.0, 0.5);
+}
+
+TEST_CASE("Radial LRMP_DG polyDeg 3 EOC convergence", "[RadLRMP],[DG],[Convergence],[EOC]")
+{
+	cadet::test::column::testRadialDGConvergence(
+		"/data/model_radLRMP_DG_gaussianPulse_1comp_eocbenchmark.json", "001",
+		3, 4, 4, 4.0, 0.5);
+}

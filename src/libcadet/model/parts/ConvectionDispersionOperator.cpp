@@ -194,6 +194,16 @@ bool AxialConvectionDispersionOperatorBase::configureModelDiscretization(IParame
 		throw InvalidParameterException("Unknown reconstruction type in field RECONSTRUCTION");
 	}
 
+	// Read optional non-equidistant grid faces
+	if (paramProvider.exists("GRID_FACES"))
+	{
+		_gridFaces = paramProvider.getDoubleArray("GRID_FACES");
+		if (_gridFaces.size() != _nCol + 1)
+			throw InvalidParameterException("GRID_FACES must contain NCOL+1 = " + std::to_string(_nCol + 1) + " entries, got " + std::to_string(_gridFaces.size()));
+	}
+	else
+		_gridFaces.clear();
+
 	paramProvider.popScope();
 
 	return true;
@@ -299,6 +309,11 @@ bool AxialConvectionDispersionOperatorBase::configure(UnitOpIdx unitOpIdx, IPara
 	registerScalarSectionDependentParam(hashString("VELOCITY"), parameters, _velocity, unitOpIdx, ParTypeIndep);
 	parameters[makeParamId(hashString("COL_LENGTH"), unitOpIdx, CompIndep, ParTypeIndep, BoundStateIndep, ReactionIndep, SectionIndep)] = &_colLength;
 	parameters[makeParamId(hashString("CROSS_SECTION_AREA"), unitOpIdx, CompIndep, ParTypeIndep, BoundStateIndep, ReactionIndep, SectionIndep)] = &_crossSection;
+
+	if (_gridFaces.empty())
+		equidistantCells();
+	else
+		customCells(_gridFaces);
 
 	return true;
 }
@@ -423,8 +438,6 @@ int AxialConvectionDispersionOperatorBase::residualImpl(const IModel& model, dou
 {
 	const ParamType u = static_cast<ParamType>(_curVelocity);
 	active const* const d_c = getSectionDependentSlice(_colDispersion, _nComp, secIdx);
-	const ParamType h = static_cast<ParamType>(_colLength) / static_cast<double>(_nCol);
-//	const int strideCell = strideColCell();
 
 	const std::vector<active>* const cellFacesPtr = _cellFaces.empty() ? nullptr : &_cellFaces;
 
@@ -433,7 +446,8 @@ int AxialConvectionDispersionOperatorBase::residualImpl(const IModel& model, dou
 		convdisp::AxialFlowParameters<ParamType, Weno> fp{
 			u,
 			d_c,
-			h,
+			_cellSizes.data(),
+			_cellCenters.data(),
 			_reconstrDerivatives,
 			_weno,
 			&_stencilMemory,
@@ -455,7 +469,8 @@ int AxialConvectionDispersionOperatorBase::residualImpl(const IModel& model, dou
 		convdisp::AxialFlowParameters<ParamType, HighResolutionKoren> fp{
 			u,
 			d_c,
-			h,
+			_cellSizes.data(),
+			_cellCenters.data(),
 			_reconstrDerivatives,
 			_koren,
 			&_stencilMemory,
@@ -476,11 +491,42 @@ int AxialConvectionDispersionOperatorBase::residualImpl(const IModel& model, dou
 	return 0;
 }
 
+void AxialConvectionDispersionOperatorBase::equidistantCells()
+{
+	const active dz = _colLength / static_cast<double>(_nCol);
+	_cellSizes.assign(_nCol, dz);
+	_cellCenters.resize(_nCol);
+	_cellBounds.resize(_nCol + 1);
+
+	for (unsigned int i = 0; i < _nCol; ++i)
+	{
+		_cellCenters[i] = (i + 0.5) * dz;
+		_cellBounds[i] = i * dz;
+	}
+	_cellBounds[_nCol] = _colLength;
+}
+
+void AxialConvectionDispersionOperatorBase::customCells(const std::vector<double>& faces)
+{
+	_cellBounds.resize(_nCol + 1);
+	_cellSizes.resize(_nCol);
+	_cellCenters.resize(_nCol);
+
+	for (unsigned int i = 0; i < _nCol + 1; ++i)
+		_cellBounds[i] = faces[i];
+
+	for (unsigned int i = 0; i < _nCol; ++i)
+	{
+		_cellSizes[i] = faces[i + 1] - faces[i];
+		_cellCenters[i] = 0.5 * (faces[i] + faces[i + 1]);
+	}
+}
+
 /**
  * @brief Multiplies the time derivative Jacobian @f$ \frac{\partial F}{\partial \dot{y}}\left(t, y, \dot{y}\right) @f$ with a given vector
  * @details The operation @f$ z = \frac{\partial F}{\partial \dot{y}} x @f$ is performed.
  *          The matrix-vector multiplication is performed matrix-free (i.e., no matrix is explicitly formed).
- *          
+ *
  *          Note that this function only performs multiplication with the Jacobian of the (axial) transport equations.
  *          The input vectors are assumed to point to the beginning (including inlet DOFs) of the respective unit operation's arrays.
  * @param [in] simTime Simulation time information (time point, section index, pre-factor of time derivatives)
@@ -567,7 +613,7 @@ unsigned int AxialConvectionDispersionOperatorBase::jacobianDiscretizedBandwidth
 
 double AxialConvectionDispersionOperatorBase::inletJacobianFactor() const CADET_NOEXCEPT
 {
-	const double h = static_cast<double>(_colLength) / static_cast<double>(_nCol);
+	const double h = static_cast<double>(_cellSizes[0]);
 	const double u = static_cast<double>(_curVelocity);
 	return u / h;
 }
@@ -711,12 +757,15 @@ bool AxialConvectionDispersionOperatorBase::setSensitiveParameter(std::unordered
 /**
  * @brief Creates a RadialConvectionDispersionOperatorBase
  */
-RadialConvectionDispersionOperatorBase::RadialConvectionDispersionOperatorBase() : _stencilMemory(sizeof(active) * Weno::maxStencilSize()), _dispersionDep(nullptr)
+RadialConvectionDispersionOperatorBase::RadialConvectionDispersionOperatorBase() : _stencilMemory(sizeof(active) * Weno::maxStencilSize()), _reconstrDerivatives(nullptr), _weno(nullptr), _koren(nullptr), _dispersionDep(nullptr)
 {
 }
 
 RadialConvectionDispersionOperatorBase::~RadialConvectionDispersionOperatorBase() CADET_NOEXCEPT
 {
+	delete[] _reconstrDerivatives;
+	delete _weno;
+	delete _koren;
 	if (_dispersionDep)
 		delete _dispersionDep;
 }
@@ -749,14 +798,44 @@ bool RadialConvectionDispersionOperatorBase::configureModelDiscretization(IParam
 
 	paramProvider.pushScope("discretization");
 
-	// Read WENO settings and apply them
-/*
-	paramProvider.pushScope("weno");
-	_weno.order(paramProvider.getInt("WENO_ORDER"));
-	_weno.boundaryTreatment(paramProvider.getInt("BOUNDARY_MODEL"));
-	_wenoEpsilon = paramProvider.getDouble("WENO_EPS");
-	paramProvider.popScope();
-*/
+	const std::string recType = paramProvider.exists("RECONSTRUCTION") ? paramProvider.getString("RECONSTRUCTION") : "WENO";
+
+	if (recType == "WENO")
+	{
+		paramProvider.pushScope("weno");
+
+		_weno = new Weno();
+		_weno->order(paramProvider.getInt("WENO_ORDER"));
+		_weno->boundaryTreatment(paramProvider.getInt("BOUNDARY_MODEL"));
+		_weno->epsilon(paramProvider.getDouble("WENO_EPS"));
+
+		paramProvider.popScope();
+
+		_reconstrDerivatives = new double[Weno::maxStencilSize()];
+		_stencilMemory.resize(sizeof(active) * Weno::maxStencilSize());
+	}
+	else if (recType == "KOREN")
+	{
+		paramProvider.pushScope("koren");
+
+		_koren = new HighResolutionKoren();
+		_koren->epsilon(paramProvider.getDouble("KOREN_EPS"));
+
+		paramProvider.popScope();
+
+		_reconstrDerivatives = new double[HighResolutionKoren::maxStencilSize()];
+		_stencilMemory.resize(sizeof(active) * HighResolutionKoren::maxStencilSize());
+	}
+
+	// Read optional non-equidistant grid faces
+	if (paramProvider.exists("GRID_FACES"))
+	{
+		_gridFaces = paramProvider.getDoubleArray("GRID_FACES");
+		if (_gridFaces.size() != _nCol + 1)
+			throw InvalidParameterException("GRID_FACES must contain NCOL+1 = " + std::to_string(_nCol + 1) + " entries, got " + std::to_string(_gridFaces.size()));
+	}
+	else
+		_gridFaces.clear();
 
 	paramProvider.popScope();
 
@@ -881,7 +960,10 @@ bool RadialConvectionDispersionOperatorBase::configure(UnitOpIdx unitOpIdx, IPar
 	parameters[makeParamId(hashString("COL_RADIUS_INNER"), unitOpIdx, CompIndep, ParTypeIndep, BoundStateIndep, ReactionIndep, SectionIndep)] = &_innerRadius;
 	parameters[makeParamId(hashString("COL_RADIUS_OUTER"), unitOpIdx, CompIndep, ParTypeIndep, BoundStateIndep, ReactionIndep, SectionIndep)] = &_outerRadius;
 
-	equidistantCells();
+	if (_gridFaces.empty())
+		equidistantCells();
+	else
+		customCells(_gridFaces);
 
 	return true;
 }
@@ -1011,23 +1093,52 @@ int RadialConvectionDispersionOperatorBase::residualImpl(const IModel& model, do
 	const ParamType u = static_cast<ParamType>(_curVelocity);
 	active const* const d_rad = getSectionDependentSlice(_colDispersion, _nComp, secIdx);
 
-	convdisp::RadialFlowParameters<ParamType> fp{
-		u,
-		d_rad,
-		_cellCenters.data(),
-		_cellSizes.data(),
-		_cellBounds.data(),
-		&_stencilMemory,
-		strideColCell(),
-		_nComp,
-		_nCol,
-		0u,
-		_nComp,
-		_dispersionDep,
-		model
-	};
+	if (_weno)
+	{
+		convdisp::RadialFlowParameters<ParamType, Weno> fp{
+			u,
+			d_rad,
+			_cellCenters.data(),
+			_cellSizes.data(),
+			_cellBounds.data(),
+			_reconstrDerivatives,
+			_weno,
+			&_stencilMemory,
+			strideColCell(),
+			_nComp,
+			_nCol,
+			0u,
+			_nComp,
+			_dispersionDep,
+			model
+		};
 
-	return convdisp::residualKernelRadial<StateType, ResidualType, ParamType, RowIteratorType, wantJac, wantRes>(SimulationTime{t, secIdx}, y, yDot, res, jacBegin, fp);
+		return convdisp::residualKernelRadial<StateType, ResidualType, ParamType, Weno, RowIteratorType, wantJac, wantRes>(SimulationTime{t, secIdx}, y, yDot, res, jacBegin, fp);
+	}
+	else if (_koren)
+	{
+		convdisp::RadialFlowParameters<ParamType, HighResolutionKoren> fp{
+			u,
+			d_rad,
+			_cellCenters.data(),
+			_cellSizes.data(),
+			_cellBounds.data(),
+			_reconstrDerivatives,
+			_koren,
+			&_stencilMemory,
+			strideColCell(),
+			_nComp,
+			_nCol,
+			0u,
+			_nComp,
+			_dispersionDep,
+			model
+		};
+
+		return convdisp::residualKernelRadial<StateType, ResidualType, ParamType, HighResolutionKoren, RowIteratorType, wantJac, wantRes>(SimulationTime{t, secIdx}, y, yDot, res, jacBegin, fp);
+	}
+
+	return -1;
 }
 
 /**
@@ -1083,14 +1194,22 @@ unsigned int RadialConvectionDispersionOperatorBase::jacobianLowerBandwidth() co
 	// right cell face (lower + 1 + upper) and to the left cell face (shift the stencil by -1 because influx of cell i
 	// is outflux of cell i-1)
 	// We also have to make sure that there's at least one sub and super diagonal for the dispersion term
-//	return std::max(_weno.lowerBandwidth() + 1u, 1u) * strideColCell();
+	if (_weno)
+		return std::max(_weno->lowerBandwidth() + 1u, 1u) * strideColCell();
+	else if (_koren)
+		return std::max(_koren->lowerBandwidth() + 1u, 1u) * strideColCell();
+
 	return strideColCell();
 }
 
 unsigned int RadialConvectionDispersionOperatorBase::jacobianUpperBandwidth() const CADET_NOEXCEPT
 {
 	// We have to make sure that there's at least one sub and super diagonal for the dispersion term
-//	return std::max(_weno.upperBandwidth(), 1u) * strideColCell();
+	if (_weno)
+		return std::max(_weno->upperBandwidth(), 1u) * strideColCell();
+	else if (_koren)
+		return std::max(_koren->upperBandwidth(), 1u) * strideColCell();
+
 	return strideColCell();
 }
 
@@ -1124,14 +1243,14 @@ bool RadialConvectionDispersionOperatorBase::setParameter(const ParameterId& pId
 	if (pId.name == hashString("COL_RADIUS_INNER"))
 	{
 		_innerRadius.setValue(value);
-		equidistantCells();
+		if (_gridFaces.empty()) equidistantCells();
 		return true;
 	}
 
 	if (pId.name == hashString("COL_RADIUS_OUTER"))
 	{
 		_outerRadius.setValue(value);
-		equidistantCells();
+		if (_gridFaces.empty()) equidistantCells();
 		return true;
 	}
 
@@ -1181,14 +1300,14 @@ bool RadialConvectionDispersionOperatorBase::setSensitiveParameterValue(const st
 	if (pId.name == hashString("COL_RADIUS_INNER"))
 	{
 		_innerRadius.setValue(value);
-		equidistantCells();
+		if (_gridFaces.empty()) equidistantCells();
 		return true;
 	}
 
 	if (pId.name == hashString("COL_RADIUS_OUTER"))
 	{
 		_outerRadius.setValue(value);
-		equidistantCells();
+		if (_gridFaces.empty()) equidistantCells();
 		return true;
 	}
 
@@ -1244,14 +1363,14 @@ bool RadialConvectionDispersionOperatorBase::setSensitiveParameter(std::unordere
 	if (pId.name == hashString("COL_RADIUS_INNER"))
 	{
 		_innerRadius.setADValue(adDirection, adValue);
-		equidistantCells();
+		if (_gridFaces.empty()) equidistantCells();
 		return true;
 	}
 
 	if (pId.name == hashString("COL_RADIUS_OUTER"))
 	{
 		_outerRadius.setADValue(adDirection, adValue);
-		equidistantCells();
+		if (_gridFaces.empty()) equidistantCells();
 		return true;
 	}
 
@@ -1302,6 +1421,22 @@ void RadialConvectionDispersionOperatorBase::equidistantCells()
 
 	_cellCenters = std::move(centers);
 	_cellBounds = std::move(bounds);
+}
+
+void RadialConvectionDispersionOperatorBase::customCells(const std::vector<double>& faces)
+{
+	_cellBounds.resize(_nCol + 1);
+	_cellSizes.resize(_nCol);
+	_cellCenters.resize(_nCol);
+
+	for (unsigned int i = 0; i < _nCol + 1; ++i)
+		_cellBounds[i] = faces[i];
+
+	for (unsigned int i = 0; i < _nCol; ++i)
+	{
+		_cellSizes[i] = faces[i + 1] - faces[i];
+		_cellCenters[i] = 0.5 * (faces[i] + faces[i + 1]);
+	}
 }
 
 /**

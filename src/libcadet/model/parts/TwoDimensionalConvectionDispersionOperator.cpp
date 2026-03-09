@@ -879,6 +879,15 @@ bool TwoDimensionalConvectionDispersionOperator::configure(UnitOpIdx unitOpIdx, 
 	parameters[makeParamId(hashString("COL_RADIUS"), unitOpIdx, CompIndep, ParTypeIndep, BoundStateIndep, ReactionIndep, SectionIndep)] = &_colRadius;
 	registerParam1DArray(parameters, _colPorosities, [=](bool multi, unsigned int i) { return makeParamId(hashString("COL_POROSITY"), unitOpIdx, CompIndep, multi ? i : ParTypeIndep, BoundStateIndep, ReactionIndep, SectionIndep); });
 
+	// Build equidistant axial cell arrays (2D operator uses uniform axial spacing)
+	{
+		const active dz = _colLength / static_cast<double>(_nCol);
+		_axialCellSizes.assign(_nCol, dz);
+		_axialCellCenters.resize(_nCol);
+		for (unsigned int i = 0; i < _nCol; ++i)
+			_axialCellCenters[i] = (i + 0.5) * dz;
+	}
+
 	return true;
 }
 
@@ -939,7 +948,7 @@ void TwoDimensionalConvectionDispersionOperator::setFlowRates(active const* in, 
 
 double TwoDimensionalConvectionDispersionOperator::inletFactor(unsigned int idxSec, int idxRad) const CADET_NOEXCEPT
 {
-	const double h = static_cast<double>(_colLength) / static_cast<double>(_nCol);
+	const double h = static_cast<double>(_axialCellSizes[0]);
 	return -std::abs(static_cast<double>(_curVelocity[idxRad])) / h;
 }
 
@@ -1005,7 +1014,6 @@ int TwoDimensionalConvectionDispersionOperator::residualImpl(const IModel& model
 	}
 
 	// Handle convection, axial dispersion (WENO)
-	const ParamType h = static_cast<ParamType>(_colLength) / static_cast<double>(_nCol);
 	for (unsigned int i = 0; i < _nRad; ++i)
 	{
 		active const* const d_c = getSectionDependentSlice(_axialDispersion, _nRad * _nComp, secIdx) + i * _nComp;
@@ -1013,7 +1021,8 @@ int TwoDimensionalConvectionDispersionOperator::residualImpl(const IModel& model
 		convdisp::AxialFlowParameters<ParamType, Weno> fp{
 			static_cast<ParamType>(_curVelocity[i]),
 			d_c,
-			h,
+			_axialCellSizes.data(),
+			_axialCellCenters.data(),
 			_wenoDerivatives,
 			&_weno,
 			&_stencilMemory,

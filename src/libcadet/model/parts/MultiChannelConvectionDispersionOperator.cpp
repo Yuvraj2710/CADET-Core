@@ -836,6 +836,15 @@ bool MultiChannelConvectionDispersionOperator::configure(UnitOpIdx unitOpIdx, IP
 
 	setSparsityPattern();
 
+	// Build equidistant axial cell arrays (multi-channel operator uses uniform axial spacing)
+	{
+		const active dz = _colLength / static_cast<double>(_nCol);
+		_axialCellSizes.assign(_nCol, dz);
+		_axialCellCenters.resize(_nCol);
+		for (unsigned int i = 0; i < _nCol; ++i)
+			_axialCellCenters[i] = (i + 0.5) * dz;
+	}
+
 	return true;
 }
 
@@ -922,7 +931,7 @@ void MultiChannelConvectionDispersionOperator::setFlowRates(active const* in, ac
 
 double MultiChannelConvectionDispersionOperator::inletFactor(unsigned int idxSec, int idxRad) const CADET_NOEXCEPT
 {
-	const double h = static_cast<double>(_colLength) / static_cast<double>(_nCol);
+	const double h = static_cast<double>(_axialCellSizes[0]);
 	return -std::abs(static_cast<double>(_curVelocity[idxRad])) / h;
 }
 
@@ -987,7 +996,6 @@ int MultiChannelConvectionDispersionOperator::residualImpl(const IModel& model, 
 	}
 
 	// Handle convection, axial dispersion (WENO)
-	const ParamType h = static_cast<ParamType>(_colLength) / static_cast<double>(_nCol);
 	for (unsigned int i = 0; i < _nChannel; ++i)
 	{
 		active const* const d_c = getSectionDependentSlice(_axialDispersion, _nChannel * _nComp, secIdx) + i * _nComp;
@@ -995,7 +1003,8 @@ int MultiChannelConvectionDispersionOperator::residualImpl(const IModel& model, 
 		convdisp::AxialFlowParameters<ParamType, cadet::Weno> fp{
 			static_cast<ParamType>(_curVelocity[i]),
 			d_c,
-			h,
+			_axialCellSizes.data(),
+			_axialCellCenters.data(),
 			_wenoDerivatives,
 			&_weno,
 			&_stencilMemory,

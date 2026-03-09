@@ -174,6 +174,9 @@ protected:
 	std::vector<int> _dir; //!< Current flow direction 
 	bool _singleVelocity; //!< Determines whether only one velocity for all compartments is given
 
+	std::vector<active> _axialCellSizes;   //!< Size of each axial cell
+	std::vector<active> _axialCellCenters; //!< Center position of each axial cell
+
 	ArrayPool _stencilMemory; //!< Provides memory for the stencil
 	double* _wenoDerivatives; //!< Holds derivatives of the WENO scheme
 	Weno _weno; //!< The WENO scheme implementation

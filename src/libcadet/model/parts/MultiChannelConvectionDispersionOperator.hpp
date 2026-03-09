@@ -166,6 +166,9 @@ protected:
 
 	IParameterParameterDependence* _dispersionDep;
 
+	std::vector<active> _axialCellSizes;   //!< Size of each axial cell
+	std::vector<active> _axialCellCenters; //!< Center position of each axial cell
+
 	ArrayPool _stencilMemory; //!< Provides memory for the stencil
 	double* _wenoDerivatives; //!< Holds derivatives of the WENO scheme
 	Weno _weno; //!< The WENO scheme implementation
