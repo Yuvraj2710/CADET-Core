@@ -700,6 +700,43 @@ MatrixXd radialDispersionMatrix(const unsigned int polyDeg, const VectorXd LGLno
 	return S_g;
 }
 
+MatrixXd radialFilmDiffusionMatrix(const unsigned int polyDeg, const VectorXd LGLnodes,
+                                    const double rho_left, const double delta_rho,
+                                    const VectorXd kfAtNodes, const int nQuadPoints)
+{
+	const unsigned int nNodes = polyDeg + 1;
+	const int nQuad = (nQuadPoints < 0) ? static_cast<int>((3 * polyDeg + 1) / 2 + 1) : nQuadPoints;
+
+	VectorXd quadNodes = VectorXd::Zero(nQuad);
+	VectorXd quadWeights = VectorXd::Zero(nQuad);
+	lgNodesWeights(nQuad - 1, quadNodes, quadWeights, false);
+
+	MatrixXd basisAtQuad(nNodes, nQuad);
+	for (unsigned int j = 0; j < nNodes; j++) {
+		basisAtQuad.row(j) = evalLagrangeBasis(j, LGLnodes, quadNodes);
+	}
+
+	VectorXd kfAtQuad = VectorXd::Zero(nQuad);
+	for (int k = 0; k < nQuad; k++) {
+		for (unsigned int j = 0; j < nNodes; j++) {
+			kfAtQuad[k] += kfAtNodes[j] * basisAtQuad(j, k);
+		}
+	}
+
+	MatrixXd M_K = MatrixXd::Zero(nNodes, nNodes);
+	for (unsigned int i = 0; i < nNodes; i++) {
+		for (unsigned int j = 0; j < nNodes; j++) {
+			for (int k = 0; k < nQuad; k++) {
+				double rho_k = rho_left + 0.5 * delta_rho * (1.0 + quadNodes[k]);
+				double weight_factor = quadWeights[k] * rho_k * kfAtQuad[k];
+				M_K(i, j) += weight_factor * basisAtQuad(i, k) * basisAtQuad(j, k);
+			}
+		}
+	}
+
+	return M_K;
+}
+
 } // namespace dgtoolbox
 } // namespace parts
 } // namespace model
