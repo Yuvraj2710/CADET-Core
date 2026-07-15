@@ -151,6 +151,14 @@ Eigen::MatrixXd mMatrix(const unsigned int polyDeg, const Eigen::VectorXd nodes,
  */
 Eigen::MatrixXd weightedMMatrix(const unsigned int polyDeg, const Eigen::VectorXd nodes);
 /**
+ * @brief calculates the quadratic weighted mass matrix M^{(0,2)} for frustum DG integrals
+ * @detail For integrals of the form \int_E \ell_i(\xi) \ell_j(\xi) (1 + \xi)^2 d\xi
+ *         Used to construct frustum weighted mass matrix: M_{r^2} = r_L^2 * M^{(0,0)} + r_L * dr * M^{(0,1)} + dr^2/4 * M^{(0,2)}
+ * @param [in] polyDeg polynomial degree
+ * @param [in] nodes polynomial interpolation nodes
+ */
+Eigen::MatrixXd quadraticWeightedMMatrix(const unsigned int polyDeg, const Eigen::VectorXd nodes);
+/**
  * @brief calculates a specific second order nodal stiffness matrix
  * @detail for integrals including terms of the form (1 - \xi)^\alpha (1 + \xi)^\beta. Computation via transformation to the respective Jacobi polynomial
  * @param [in] polyDeg polynomial degree

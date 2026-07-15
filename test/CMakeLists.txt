@@ -69,7 +69,7 @@ endif()
 add_executable(testRunner testRunner.cpp JsonTestModels.cpp ColumnTests.cpp UnitOperationTests.cpp SimHelper.cpp ParticleHelper.cpp
 	GeneralRateModel.cpp GeneralRateModel2D.cpp LumpedRateModelWithPores.cpp LumpedRateModelWithoutPores.cpp
 	RadialGeneralRateModel.cpp RadialLumpedRateModelWithPores.cpp RadialLumpedRateModelWithoutPores.cpp
-	FrustumGeneralRateModel.cpp
+	FrustumGeneralRateModel.cpp FrustumLumpedRateModelWithoutPoresDG.cpp
 	MultiChannelTransportModel.cpp
 	Crystallization.cpp
 	CSTR-Residual.cpp CSTR-Simulation.cpp

@@ -273,22 +273,22 @@ namespace model
 			? paramProvider.getBool("FV_ARROW_HEAD_OPTIMIZATION")
 			: discName == "FV";
 
-		if (discName != "FV")
-			throw InvalidParameterException("Only FV discretization supported for Frustum geometry but " + discName + " was asked for unit " + std::to_string(uoId));
-		else if (!arrowHeadOpt)
-			throw InvalidParameterException("FV_ARROW_HEAD_OPTIMIZATION was set to false for unit " + std::to_string(uoId) + " but only arrow head implementation is available");
+		if (discName == "FV")
+		{
+			if (!arrowHeadOpt)
+				LOG(Info) << "FV_ARROW_HEAD_OPTIMIZATION is set to false, possibly resulting in a less efficient computation";
+		}
+		else if (arrowHeadOpt)
+		{
+			throw InvalidParameterException("FV_ARROW_HEAD_OPTIMIZATION is only available for FV discretization but " + discName + " was specified for " + uoType);
+		}
 
 		paramProvider.popScope(); // discretization
 
 		if (uoType == "FRUSTUM_COLUMN_MODEL_1D")
 		{
-			if (paramProvider.exists("particle_type_000"))
+			if (paramProvider.getInt("NPARTYPE") > 0)
 			{
-				if (discName == "DG")
-					LOG(Error) << "Frustum flow not implemented for DG discretization yet, was called for unit " << uoId;
-				else if (discName != "FV")
-					LOG(Error) << "Unknown bulk discretization type " << discName << " for unit " << uoId;
-
 				paramProvider.pushScope("particle_type_000");
 
 				const bool filmDiffusion = paramProvider.getBool("HAS_FILM_DIFFUSION");
@@ -297,22 +297,48 @@ namespace model
 
 				const std::string particleType = ParticleModel(filmDiffusion, poreDiffusion, surfaceDiffusion).getParticleTransportType();
 
-				if (particleType == "EQUILIBRIUM_PARTICLE")
-					model = createFrustumFVLRM(uoId);
-				if (particleType == "HOMOGENEOUS_PARTICLE")
-					model = createFrustumFVLRMP(uoId);
-				else if (particleType == "GENERAL_RATE_PARTICLE")
-					model = createFrustumFVGRM(uoId);
+				if (discName == "DG")
+				{
+					if (particleType == "EQUILIBRIUM_PARTICLE")
+						model = createFrustumLRMDG(uoId);
+					else
+						model = createFrustumCol1DDG(uoId);
+				}
+				else if (discName == "FV")
+				{
+					if (particleType == "EQUILIBRIUM_PARTICLE")
+						model = arrowHeadOpt ? createFrustumFVLRM(uoId) : createFrustumCol1DFV(uoId);
+					else if (particleType == "HOMOGENEOUS_PARTICLE")
+						model = arrowHeadOpt ? createFrustumFVLRMP(uoId) : createFrustumCol1DFV(uoId);
+					else if (particleType == "GENERAL_RATE_PARTICLE")
+						model = arrowHeadOpt ? createFrustumFVGRM(uoId) : createFrustumCol1DFV(uoId);
+					else
+						LOG(Error) << "Unknown particle type " << particleType << " for unit " << uoId;
+				}
+				else
+					LOG(Error) << "Unknown bulk discretization type " << discName << " for unit " << uoId;
 
 				paramProvider.popScope();
 			}
 			else
-				model = createFrustumFVLRM(uoId); // LRMP used for npartype = 0
+			{
+				if (discName == "DG")
+					model = createFrustumCol1DDG(uoId);
+				else
+					model = arrowHeadOpt ? createFrustumFVLRM(uoId) : createFrustumCol1DFV(uoId);
+			}
 		}
 		else
 		{
 			if (discName == "DG")
-				LOG(Error) << "Frustum flow not implemented for DG discretization yet, was called for unit " << uoId;
+			{
+				if (uoType == "FRUSTUM_LUMPED_RATE_MODEL_WITHOUT_PORES")
+					model = createFrustumLRMDG(uoId);
+				else if (uoType == "FRUSTUM_LUMPED_RATE_MODEL_WITH_PORES" || uoType == "FRUSTUM_GENERAL_RATE_MODEL")
+					model = createFrustumCol1DDG(uoId);
+				else
+					LOG(Error) << "Frustum DG only supports LRM, LRMP, and GRM currently for unit " << uoId;
+			}
 			else if (discName == "FV")
 			{
 				if (uoType == "FRUSTUM_LUMPED_RATE_MODEL_WITHOUT_PORES")
@@ -341,12 +367,16 @@ namespace model
 		models["COLUMN_MODEL_2D"] = selectAxialFlowColumnUnitOperation;
 
 		typedef LumpedRateModelWithoutPoresDG<parts::RadialConvectionDispersionOperatorBaseDG> RadialLRMDG;
+		typedef LumpedRateModelWithoutPoresDG<parts::FrustumConvectionDispersionOperatorBaseDG> FrustumLRMDG;
 
 		models[LumpedRateModelWithoutPoresDG<>::identifier()] = selectAxialFlowColumnUnitOperation;
 		models["LRM_DG"] = selectAxialFlowColumnUnitOperation;
 
 		models[RadialLRMDG::identifier()] = selectRadialFlowColumnUnitOperation;
 		models["RLRM_DG"] = selectRadialFlowColumnUnitOperation;
+
+		models[FrustumLRMDG::identifier()] = selectFrustumFlowColumnUnitOperation;
+		models["FLRM_DG"] = selectFrustumFlowColumnUnitOperation;
 
 		typedef GeneralRateModel<parts::AxialConvectionDispersionOperator> AxialGRM;
 		typedef GeneralRateModel<parts::RadialConvectionDispersionOperator> RadialGRM;
@@ -382,6 +412,14 @@ namespace model
 
 		models[RadialLRM::identifier()] = selectRadialFlowColumnUnitOperation;
 		models["RLRM"] = selectRadialFlowColumnUnitOperation;
+
+		typedef LumpedRateModelWithoutPores<parts::FrustumConvectionDispersionOperatorBaseFV> FrustumLRM;
+		models[FrustumLRM::identifier()] = selectFrustumFlowColumnUnitOperation;
+		models["FLRM"] = selectFrustumFlowColumnUnitOperation;
+
+		typedef LumpedRateModelWithPores<parts::FrustumConvectionDispersionOperator> FrustumLRMP;
+		models[FrustumLRMP::identifier()] = selectFrustumFlowColumnUnitOperation;
+		models["FLRMP"] = selectFrustumFlowColumnUnitOperation;
 	}
 
 }  // namespace model

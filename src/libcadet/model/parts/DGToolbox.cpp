@@ -466,6 +466,16 @@ Eigen::MatrixXd weightedMMatrix(const unsigned int polyDeg, const Eigen::VectorX
 	return mMatrix(polyDeg, nodes, 0.0, 1.0);
 }
 /**
+ * @brief calculates the quadratic weighted mass matrix M^{(0,2)} for frustum DG integrals
+ * @detail For integrals of the form \int_E \ell_i(\xi) \ell_j(\xi) (1 + \xi)^2 d\xi
+ * @param [in] polyDeg polynomial degree
+ * @param [in] nodes polynomial interpolation nodes
+ */
+Eigen::MatrixXd quadraticWeightedMMatrix(const unsigned int polyDeg, const Eigen::VectorXd nodes)
+{
+	return mMatrix(polyDeg, nodes, 0.0, 2.0);
+}
+/**
  * @brief calculates the derivative of the Vandermonde matrix of the normalized Legendre polynomials
  * @param [in] polyDeg polynomial degree
  * @param [in] a Jacobi polynomial parameter
